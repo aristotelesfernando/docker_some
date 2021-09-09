@@ -1,0 +1,198 @@
+* Executando uma imagem (se não existir vai baixar a mesma)
+$ docker run -d -p 8080:80 docker/getting-started
+
+-d - executa como deamon
+-p 8080:80 - mapeando a porta 80 do container para a porta 8080 do host
+docker/getting-started - usuário/imagem a ser usada
+
+* Baixar o arquivo de uma app NODE e descompacta-la
+$ wget http://ip172-18-0-84-bu4qaspqckh000agmasg-80.direct.labs.play-with-docker.com/assets/app.zip
+
+* Criando o arquivo Dockerfile para criar uma nova imagem:
+FROM node:12-alpine
+WORKDIR /app
+COPY . .
+RUN yarn install --production
+CMD ["node", "src/index.js"]
+
+* Construindo a imagem baseada no Dockerfile
+$ docker build -t getting-started .
+
+* Executando a aplicação:
+$ docker run -dp 3000:3000 getting-started
+
+---------------------------------- Atulizando a aplicação
+* Após realizar qualquer alteração no código fonte da aplicação, é preciso reconstruir a imagem
+onde ela está rodando:
+$ docker build -t getting-started .
+
+* Se você executar o comando "docker run -dp 3000:3000 getting-started" isso vai gerar um erro, pois a imagem
+do container está sendo executada
+docker: Error response from daemon: driver failed programming external connectivity on endpoint laughing_burnell 
+(bb242b2ca4d67eba76e79474fb36bb5125708ebdabd7f45c8eaf16caaabde9dd): Bind for 0.0.0.0:3000 failed: port is already allocated.
+
+* É necessário remover o container, execute o comando abaixo para identificar o ID do container
+$ docker ps
+
+* Pare a execução do container e em seguida remova-o:
+$ docker stop <the-container-id>
+$ docker rm <the-container-id>
+
+Alternativamente é possível parar o container e remove-lo simultaneamente:
+$ docker rm -f <the-container-id>
+
+* Depois disso, é possível reiniciar o container:
+$ docker run -dp 3000:3000 getting-started
+
+
+* Se precisar guardar uma imagem que não é sua no seu repositório:
+$ docker tag nomeimagem YOUR-USER-NAME/nomeimagem
+
+------------------------------------- Persistindo Dados (volumes)
+
+* Criando um volume localmente no HOST 
+$ docker volume create todo-db
+
+- para usar o volume criado, é necessário para e remover o container que se necessita compartilhar ou persistir informações
+$ docker rm -f <id>
+
+* Carrega novamente o container desta vez parametrizando o novo volume:
+$ docker run -dp 3000:3000 -v todo-db:/etc/todos afernandojr/getting-started
+
+- O banco usado pela app de exemplo é o SQLLITE, onde os dados são armazenados na pasta /etc/todos/, no arquivo todo.db,
+por este motivo no container estamos mapeando a pasta "/etc/todos" para o volume "todo-db" desta forma "-v todo-db:/etc/todos".
+
+* Para verificar o volume usamos:
+$ docker volume inspect todo-db
+- que nos responde da seguinte forma:
+docker volume inspect todo-db
+[
+    {
+        "CreatedAt": "2019-09-26T02:18:36Z",
+        "Driver": "local",
+        "Labels": {},
+        "Mountpoint": "/var/lib/docker/volumes/todo-db/_data",
+        "Name": "todo-db",
+        "Options": {},
+        "Scope": "local"
+    }
+]
+
+
+--------------------------- Iniciando um container para o modo desenvolvedor
+* Pare e remova o container utilizado nos exemplos anteriores
+$ docker rm -f <id>
+
+* Executar:
+$ docker run -dp 3000:3000 -w /app -v "$(pwd):/app" node:12-alpine sh -c "yarn install && yarn run dev"
+: Sintaxe da linha:
+
+	> -dp 3000:3000 - same as before. Run in detached (background) mode and create a port mapping
+	> -w /app - sets the "working directory" or the current directory that the command will run from
+	> -v "$(pwd):/app" - bind mount the current directory from the host in the container into the /app directory
+	> node:12-alpine - the image to use. Note that this is the base image for our app from the Dockerfile
+	> sh -c "yarn install && yarn run dev" - the command. We're starting a shell using sh (alpine doesn't have bash) and running yarn install to install all dependencies and then running yarn run dev. If we look in the package.json, we'll see that the dev script is starting nodemon
+
+* Podemos observar o funcionamento correto usando:
+$ docker logs -f <container-id>
+
+* Agora qualquer mudança que fizermos no código fonte da APP imediatamente será refletida na aplicação em execução.
+
+--------------------------------- Conectando uma banco de dados MYSQL em um container ao container da APP
+* Crie uma rede com o comando docker:
+$ docker network create todo-app
+
+* Agora criaremos um container mysql com a seguinte parametrização:
+$ docker run -d \
+    --network todo-app --network-alias mysql \ 		--definindo a rede e o alias de rede
+    -v todo-mysql-data:/var/lib/mysql \			--realizando bindmount, execute "docker logs -f <container-id>" para ver
+    -e MYSQL_ROOT_PASSWORD=secret \			--definindo a senha do RROY no mysql
+    -e MYSQL_DATABASE=todos \				--criando o banco de dados
+    mysql:5.7						--imagem
+
+* Agora vamos iniciar um containet com a imagem nicolaka/netshoot e conectar na mesma rede que foi criada para o MYSQL
+$ docker run -it --network todo-app nicolaka/netshoot 
+
+- Em seguida no console que irá surgir digitaremos $ dig mysql e teremos a seguinte resposta:
+; <<>> DiG 9.14.1 <<>> mysql
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 32162
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;mysql.             IN  A
+
+;; ANSWER SECTION:
+mysql.          600 IN  A   172.23.0.2   <--- aqui é o que interessa... podemos acessar o server MYSQL pelo nome "mysql"
+
+;; Query time: 0 msec
+;; SERVER: 127.0.0.11#53(127.0.0.11)
+;; WHEN: Tue Oct 01 23:47:24 UTC 2019
+;; MSG SIZE  rcvd: 44
+
+* Após isso conectaremos nossa APP ao mysql usando a seguinte lihra de comando:
+$docker run -dp 3000:3000 \
+  -w /app -v "$(pwd):/app" \
+  --network todo-app \
+  -e MYSQL_HOST=mysql \
+  -e MYSQL_USER=root \
+  -e MYSQL_PASSWORD=secret \
+  -e MYSQL_DB=todos \
+  node:12-alpine \
+  sh -c "yarn install && yarn run dev"
+
+--------------------------------- Usando docker-composer para facilitar a vida
+* Verifique a instalação:
+$ docker-compose version
+
+* Crie um arquivo chamado "docker-compose.yml" na pasta raiz da app
+- código completo do arquivo
+version: "3.7" --> VERSÃO DO SCHEMMA, VERIFIQUE A VERSÃO DO COMPOSER AQUI: (https://docs.docker.com/compose/compose-file/)
+
+services:  						--> INICIA A DEFINIÇÃO DA LISTA DE SERVIÇOS QUE IRÃO COMPOR O ARQUIVO
+  app:  						--> NOME DO SERVIÇO (AUTOMATICAMENTE VIRA NOME DE REDE)
+    image: node:12-alpine  				--> IMAGEM QUE SERÁ UTILIZADA
+    command: sh -c "yarn install && yarn run dev" 	--> COMANDO
+    ports: 						--> DEFINIÇÃO DO MAPEAMENTO DE PORTAS 
+      - 3000:3000
+    working_dir: /app					--> DEFINIÇÃO DO DIRETÓRIO DE TRABALHO (isso é um bind)
+    volumes:						--> DEFINIÇÃO DO VOLUME (isso é um bind)
+      - ./:/app
+    environment:					--> VARIÁVEIS DE AMBIENTE					
+      MYSQL_HOST: mysql
+      MYSQL_USER: root
+      MYSQL_PASSWORD: secret
+      MYSQL_DB: todos
+
+  mysql:
+    image: mysql:5.7
+    volumes:
+      - todo-mysql-data:/var/lib/mysql
+    environment: 
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: todos
+
+volumes:
+  todo-mysql-data:					--> VOLUME CRIADO PARA ATENDER A IMAGEM DO MYSQL
+
+* Executando:
+- Certifique-se de que não existe containers rodando na mesma porta ou com a mesma imagem:
+$ docker rm -f <id>
+
+$ docker-compose up -d
+- output
+Creating network "app_default" with the default driver
+Creating volume "app_todo-mysql-data" with default driver
+Creating app_app_1   ... done
+Creating app_mysql_1 ... done
+
+* Para ver o funcionamento:
+$ docker-compose logs -f <service_name>
+
+* Para baixar o funciomanento dos dois containers:
+$ docker-compose down
+
+
+
+

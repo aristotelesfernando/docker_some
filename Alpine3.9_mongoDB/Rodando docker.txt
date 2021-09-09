@@ -1,0 +1,14 @@
+//baixando uma imagem
+docker pull afernandojr/mongo:1.0
+
+//fazendo o build apartir de uma imagem previamente baixada
+docker build -t afernandojr/mongo:1.0 .
+
+//enviando uma imagem para o docker hub depois do build
+docker push afernandojr/mongo:1.0
+
+//executando o container em segundo plano (-d deamon)
+docker run -d -p 27017:27017 -v $HOME/db:/data/db afernandojr/mongo:1.0
+
+//executando o client web
+docker run -p 8081:8081 -e ME_CONFIG_MONGODB_SERVER="172.17.0.2" mongo-express
